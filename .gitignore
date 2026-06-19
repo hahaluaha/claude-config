@@ -1,0 +1,6 @@
+# Exclude everything by default
+*
+
+# Track only CLAUDE.md
+!.gitignore
+!CLAUDE.md
