@@ -135,3 +135,76 @@ read_token_field() { # $1 = staged | all
   [ -f "$p" ] || return 1
   sed -n "s/^$1=//p" "$p"
 }
+
+log_line() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '%s  %s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(pwd)" "$1" >> "$LOG_FILE"
+}
+
+block() { printf '%s\n' "$1" >&2; exit 2; }
+
+main() {
+  if [ "${1:-}" = "--approve" ]; then
+    git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git repo" >&2; exit 1; }
+    write_token
+    echo "Review token written for the current diff."
+    exit 0
+  fi
+
+  local input cmd cwd
+  input="$(cat)"
+  cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
+  cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"
+
+  [ -n "$cmd" ] || exit 0
+  parse_command "$cmd" || exit 0
+
+  [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
+  git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+
+  local diff; diff="$(target_diff)"
+  [ -n "$diff" ] || exit 0   # nothing to commit; let git report it
+
+  # --- gate 1: secrets. No override, fails closed. ---
+  printf '%s\n' "$diff" | run_gitleaks
+  case $? in
+    1) log_line "BLOCKED-SECRET  $cmd"
+       block "BLOCKED: gitleaks found a secret in this diff.
+Run 'gitleaks dir <path> --redact' to see it. Remove the secret and re-stage.
+This gate cannot be bypassed." ;;
+    3) log_line "BLOCKED-NOGITLEAKS  $cmd"
+       block "BLOCKED: gitleaks is unavailable, so the secret scan could not run.
+Install it with 'brew install gitleaks'. The gate fails closed by design." ;;
+  esac
+
+  # --- gate 2: review token. Bypassable. ---
+  if printf '%s' "$cmd" | grep -q 'CLAUDE_COMMIT_GATE=off'; then
+    log_line "BYPASS  $cmd"
+    exit 0
+  fi
+
+  local field expected actual
+  if [ "${GATE_COMMIT_ALL:-0}" -eq 1 ]; then field="all"; else field="staged"; fi
+  expected="$(read_token_field "$field" 2>/dev/null)"
+  actual="$(printf '%s\n' "$diff" | hash_stdin)"
+
+  if [ -z "$expected" ]; then
+    block "BLOCKED: this diff has not been reviewed.
+Review the staged changes, then run:
+  bash ~/.claude/hooks/commit-gate.sh --approve
+Do not approve if the review found correctness, security, or data-loss issues."
+  fi
+
+  if [ "$expected" != "$actual" ]; then
+    block "BLOCKED: the review token is stale — the diff changed since it was approved.
+Re-review the current diff, then run:
+  bash ~/.claude/hooks/commit-gate.sh --approve"
+  fi
+
+  exit 0
+}
+
+# Only run when executed, not when sourced by the test harness.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

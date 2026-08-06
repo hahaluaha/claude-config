@@ -157,5 +157,36 @@ h_all_after="$(all_diff | shasum -a 256 | cut -d' ' -f1)"
 
 cd / && rm -rf "$R"
 
+# --- end-to-end ---
+R2="$(make_repo)"
+printf 'new work\n' >> "$R2/file.txt"
+git -C "$R2" add file.txt
+
+assert_exit 0 "non-git command passes"        run_gate 'ls -la' "$R2"
+assert_exit 2 "commit without token blocked"  run_gate 'git commit -m "x"' "$R2"
+
+( cd "$R2" && bash "$GATE" --approve >/dev/null 2>&1 )
+assert_exit 0 "commit with fresh token allowed" run_gate 'git commit -m "x"' "$R2"
+
+printf 'more work\n' >> "$R2/file.txt"
+git -C "$R2" add file.txt
+assert_exit 2 "stale token blocked"           run_gate 'git commit -m "x"' "$R2"
+
+assert_exit 0 "bypass skips token check"      run_gate 'CLAUDE_COMMIT_GATE=off git commit -m "x"' "$R2"
+
+# a secret beats both the token and the bypass
+# (uses the same slack-token fixture as the run_gitleaks unit test above;
+# gitleaks' default ruleset explicitly allowlists the canonical AWS example
+# key AKIAIOSFODNN7EXAMPLE as a documentation placeholder, so it never
+# triggers a finding and can't be used as a positive fixture here.)
+( cd "$R2" && bash "$GATE" --approve >/dev/null 2>&1 )
+printf 'slack_token = "xox%s-1234567890-abcdefghijklmnop"\n' >> "$R2/file.txt"
+git -C "$R2" add file.txt
+( cd "$R2" && bash "$GATE" --approve >/dev/null 2>&1 )
+assert_exit 2 "secret blocked despite valid token" run_gate 'git commit -m "x"' "$R2"
+assert_exit 2 "secret blocked despite bypass"      run_gate 'CLAUDE_COMMIT_GATE=off git commit -m "x"' "$R2"
+
+cd / && rm -rf "$R2"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
