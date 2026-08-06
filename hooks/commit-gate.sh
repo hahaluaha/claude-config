@@ -107,3 +107,31 @@ parse_command() {
 
   return 1
 }
+
+hash_stdin() { shasum -a 256 | cut -d' ' -f1; }
+
+staged_diff() { git diff --cached; }
+# `git commit -a` also sweeps unstaged changes to tracked files.
+all_diff() { git diff --cached; git diff; }
+
+target_diff() {
+  if [ "${GATE_COMMIT_ALL:-0}" -eq 1 ]; then all_diff; else staged_diff; fi
+}
+
+token_path() { printf '%s/claude-review-ok' "$(git rev-parse --absolute-git-dir)"; }
+
+# Both hashes are written because --approve runs before the commit and cannot
+# know whether that commit will use -a.
+write_token() {
+  local p; p="$(token_path)" || return 1
+  {
+    printf 'staged=%s\n' "$(staged_diff | hash_stdin)"
+    printf 'all=%s\n'    "$(all_diff | hash_stdin)"
+  } > "$p"
+}
+
+read_token_field() { # $1 = staged | all
+  local p; p="$(token_path)" || return 1
+  [ -f "$p" ] || return 1
+  sed -n "s/^$1=//p" "$p"
+}

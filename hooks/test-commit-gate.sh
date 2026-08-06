@@ -95,5 +95,67 @@ check_parse "commit inside message" 'git log --grep commit'              1 0
 check_parse "message containing -a" 'git commit -m "fix -a flag bug"'    0 0
 check_parse "message with chain op and -a" 'git commit -m "wip: fix; cleanup" -a'    0 1
 
+# --- token round-trip ---
+R="$(make_repo)"
+cd "$R" || exit 1
+
+printf 'change one\n' >> file.txt
+git add file.txt
+
+GATE_COMMIT_ALL=0
+write_token
+assert_exit 0 "token file created" test -f "$(token_path)"
+
+t_staged="$(read_token_field staged)"
+[ -n "$t_staged" ] && { printf 'PASS  token has staged hash\n'; PASS=$((PASS+1)); } \
+                   || { printf 'FAIL  token has staged hash\n'; FAIL=$((FAIL+1)); }
+
+h_now="$(target_diff | shasum -a 256 | cut -d' ' -f1)"
+[ "$h_now" = "$t_staged" ] && { printf 'PASS  fresh token matches diff\n'; PASS=$((PASS+1)); } \
+                           || { printf 'FAIL  fresh token matches diff\n'; FAIL=$((FAIL+1)); }
+
+# staging more work must invalidate the token
+printf 'change two\n' >> file.txt
+git add file.txt
+h_after="$(target_diff | shasum -a 256 | cut -d' ' -f1)"
+[ "$h_after" != "$t_staged" ] && { printf 'PASS  stale token detected\n'; PASS=$((PASS+1)); } \
+                              || { printf 'FAIL  stale token detected\n'; FAIL=$((FAIL+1)); }
+
+cd / && rm -rf "$R"
+
+# --- token `all` hash regression test ---
+R="$(make_repo)"
+cd "$R" || exit 1
+
+printf 'staged change\n' >> file.txt
+git add file.txt
+
+GATE_COMMIT_ALL=0
+write_token
+
+t_all="$(read_token_field all)"
+[ -n "$t_all" ] && { printf 'PASS  token has all hash\n'; PASS=$((PASS+1)); } \
+                || { printf 'FAIL  token has all hash\n'; FAIL=$((FAIL+1)); }
+
+# At this point, no unstaged changes, so all_diff should equal staged_diff
+t_staged_check="$(read_token_field staged)"
+[ "$t_all" = "$t_staged_check" ] && { printf 'PASS  all hash equals staged when no unstaged changes\n'; PASS=$((PASS+1)); } \
+                                  || { printf 'FAIL  all hash equals staged when no unstaged changes\n'; FAIL=$((FAIL+1)); }
+
+# Verify the stored all hash matches the current all_diff
+h_all_now="$(all_diff | shasum -a 256 | cut -d' ' -f1)"
+[ "$h_all_now" = "$t_all" ] && { printf 'PASS  stored all hash matches current all_diff\n'; PASS=$((PASS+1)); } \
+                             || { printf 'FAIL  stored all hash matches current all_diff\n'; FAIL=$((FAIL+1)); }
+
+# Now make an unstaged edit (modify tracked file but do NOT git add)
+printf 'unstaged change\n' >> file.txt
+
+# The all_diff should now differ from the token's stored all hash
+h_all_after="$(all_diff | shasum -a 256 | cut -d' ' -f1)"
+[ "$h_all_after" != "$t_all" ] && { printf 'PASS  all hash invalidated by unstaged changes\n'; PASS=$((PASS+1)); } \
+                               || { printf 'FAIL  all hash invalidated by unstaged changes\n'; FAIL=$((FAIL+1)); }
+
+cd / && rm -rf "$R"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
