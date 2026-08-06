@@ -3,6 +3,7 @@
 set -uo pipefail
 
 GATE="$HOME/.claude/hooks/commit-gate.sh"
+export GATE_LOG_FILE="$(mktemp -d)/commit-gate-test.log"
 PASS=0
 FAIL=0
 
@@ -187,6 +188,23 @@ assert_exit 2 "secret blocked despite valid token" run_gate 'git commit -m "x"' 
 assert_exit 2 "secret blocked despite bypass"      run_gate 'CLAUDE_COMMIT_GATE=off git commit -m "x"' "$R2"
 
 cd / && rm -rf "$R2"
+
+# --- end-to-end: -a commit field selection through main() ---
+R3="$(make_repo)"
+printf 'staged change\n' >> "$R3/file.txt"
+git -C "$R3" add file.txt
+printf 'unstaged change\n' >> "$R3/file.txt"
+( cd "$R3" && bash "$GATE" --approve >/dev/null 2>&1 )   # writes both staged= and all= hashes
+assert_exit 0 "-a commit approved against all-diff allowed" run_gate 'git commit -a -m "x"' "$R3"
+cd / && rm -rf "$R3"
+
+R4="$(make_repo)"
+printf 'staged change\n' >> "$R4/file.txt"
+git -C "$R4" add file.txt
+( cd "$R4" && bash "$GATE" --approve >/dev/null 2>&1 )   # approval only saw the staged diff
+printf 'unstaged change after approval\n' >> "$R4/file.txt"
+assert_exit 2 "-a commit blocked when all-diff unseen at approval" run_gate 'git commit -a -m "x"' "$R4"
+cd / && rm -rf "$R4"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

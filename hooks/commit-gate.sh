@@ -4,7 +4,7 @@
 # (b) a review token matching the exact diff being committed.
 set -uo pipefail
 
-LOG_FILE="$HOME/.claude/logs/commit-gate.log"
+LOG_FILE="${GATE_LOG_FILE:-$HOME/.claude/logs/commit-gate.log}"
 
 # Reads a unified diff on stdin. 0 = clean, 1 = leaks found, 3 = unavailable/errored.
 run_gitleaks() {
