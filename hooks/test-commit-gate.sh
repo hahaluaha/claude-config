@@ -74,5 +74,26 @@ gitleaks_error_diff | bash -c "
 "
 assert_exit 0 "run_gitleaks: gitleaks error returns 3" test $? -eq 3
 
+# --- parse_command ---
+check_parse() { # $1 = label, $2 = command, $3 = expect match (0/1), $4 = expect ALL
+  parse_command "$2"; local rc=$?
+  if [ "$rc" -eq "$3" ] && { [ "$rc" -ne 0 ] || [ "$GATE_COMMIT_ALL" -eq "$4" ]; }; then
+    printf 'PASS  %s\n' "$1"; PASS=$((PASS+1))
+  else
+    printf 'FAIL  %s (rc=%s all=%s)\n' "$1" "$rc" "${GATE_COMMIT_ALL:-unset}"; FAIL=$((FAIL+1))
+  fi
+}
+
+check_parse "plain commit"          'git commit -m "hi"'                 0 0
+check_parse "commit with -a"        'git commit -am "hi"'                0 1
+check_parse "commit with --all"     'git commit --all -m "hi"'           0 1
+check_parse "git -C path commit"    'git -C /tmp/x commit -m "hi"'       0 0
+check_parse "chained add + commit"  'git add -A && git commit -m "hi"'   0 0
+check_parse "not a commit"          'ls -la'                             1 0
+check_parse "git log only"          'git log --oneline -5'               1 0
+check_parse "commit inside message" 'git log --grep commit'              1 0
+check_parse "message containing -a" 'git commit -m "fix -a flag bug"'    0 0
+check_parse "message with chain op and -a" 'git commit -m "wip: fix; cleanup" -a'    0 1
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
