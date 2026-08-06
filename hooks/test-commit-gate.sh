@@ -51,5 +51,28 @@ assert_exit 0 "run_gitleaks: clean diff returns 0" test $? -eq 0
 leak_diff | run_gitleaks
 assert_exit 0 "run_gitleaks: AWS key returns 1" test $? -eq 1
 
+# --- fail-closed paths ---
+
+# Test: gitleaks missing from PATH returns 3
+PATH="/usr/bin:/bin" bash -c "
+  source \"$GATE\"
+  command -v gitleaks >/dev/null 2>&1 && exit 1  # fail if gitleaks found
+  clean_diff() { printf '+++ b/a.txt\n+just some ordinary text\n'; }
+  clean_diff | run_gitleaks
+"
+assert_exit 0 "run_gitleaks: missing gitleaks returns 3" test $? -eq 3
+
+# Test: gitleaks error (invalid flag) returns 3
+# Create a wrapper that forces gitleaks to error
+gitleaks_error_diff() { printf '+++ b/a.txt\n+just text\n'; }
+gitleaks_error_diff | bash -c "
+  source \"$GATE\"
+  # Override gitleaks to return a non-0/1 exit code
+  gitleaks() { command gitleaks \"\$@\" --invalid-flag; }
+  export -f gitleaks
+  run_gitleaks
+"
+assert_exit 0 "run_gitleaks: gitleaks error returns 3" test $? -eq 3
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
