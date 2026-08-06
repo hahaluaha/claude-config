@@ -4,3 +4,5 @@
 # Track only CLAUDE.md
 !.gitignore
 !CLAUDE.md
+!hooks/
+!hooks/*.sh
